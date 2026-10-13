@@ -20,7 +20,7 @@ SDK identity is reset.
 | `app_active` | Once per 30-minute inactivity-defined session | Active users, platform mix, retention, uses/day |
 | `app_load_completed` | Once per native process or extension session | Startup latency and startup availability |
 | `load_completed` | All failures; successes for a stable 10% device cohort | Screen/API latency and failure rate without a firehose |
-| `$exception` | Actionable failures, signature-deduplicated and capped | Error tracking and release regressions |
+| `$exception` | Actionable failures, semantically fingerprinted, signature-deduplicated and capped | Error tracking and release regressions |
 | `auth_login_started`, `auth_login_completed`, `auth_login_failed`, `auth_session_lost`, `auth_logged_out` | Outcome events only | Client auth funnel and lost-session symptoms |
 | `auth_supabase_completed`, `auth_supabase_failed` | Extension auth outcomes only | Client correlation for the Supabase account-link step |
 | `referral_shared` | Explicit share action only | Cross-platform referral sharing without click/view noise |
@@ -30,6 +30,19 @@ Every health event has `platform` and version/build properties. `load_completed`
 rates, filter `health_sample = true`; failures outside the cohort remain available for incident
 detection. Supabase `auth_attempts` remains the authoritative auth-health source because it can
 observe failures before PostHog identity exists.
+
+Extension exceptions use a stable semantic fingerprint derived from source/type plus an explicit
+failure code or normalized message. Abort/cancellation, transient transport, and invalidated
+extension-context failures are discarded. Lectio HTTP diagnostics are metadata-only (endpoint
+basename, method/status, aggregate body/file counts and sizes, MIME/content type); raw URLs,
+queries, form values, headers, filenames, response bodies, and native popup contents must never
+be captured. Native Lectio popups are classified `lectio_native_error` events, not exceptions.
+
+Extension store releases generate hidden source maps and upload them during WXT's
+post-build/pre-ZIP hook. PostHog metadata is injected into the same JavaScript that is then
+archived for Chrome/Firefox; maps are deleted after a successful upload and excluded from the
+store ZIP. The workflow fails if generation, injection, upload, or cleanup fails, preventing a
+different rebuild from being mistaken for the shipped artifact.
 
 ## Dashboard
 

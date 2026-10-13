@@ -21,7 +21,6 @@ const MARK_ATTR = 'data-bl-error-reported';
 export interface LectioErrorPayload {
   title: string;
   body: string;
-  dialogHtml: string;
 }
 
 type ErrorHandler = (payload: LectioErrorPayload) => void;
@@ -42,7 +41,6 @@ function extractError(contentEl: Element): LectioErrorPayload | null {
   return {
     title: title.slice(0, 300),
     body: bodyText.slice(0, 2000),
-    dialogHtml: (contentEl as HTMLElement).innerHTML.slice(0, 4000),
   };
 }
 

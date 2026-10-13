@@ -1,5 +1,6 @@
 import { postFormViaHiddenIframe } from './iframe-post';
 import { captureException } from './posthog';
+import { uploadDocumentToLectio } from './lectio-file-upload';
 
 // ── Types ──────────────────────────────────────────────────────────────
 
@@ -531,32 +532,11 @@ export async function uploadFileAndSubmit(
     throw new Error('Missing form action');
   }
 
-  // Step 1: Upload file to Lectio's document upload endpoint
-  const uploadUrl = new URL(`/lectio/${schoolId}/dokumentupload.aspx`, window.location.origin).href;
-  const uploadForm = new FormData();
-  uploadForm.append('file', file);
-
+  // Step 1: Upload file to Lectio's document upload endpoint. Lectio rejects
+  // some otherwise-valid macOS filenames, so the shared helper supplies a
+  // server-safe multipart filename while preserving the file contents.
   onStatus?.('uploading');
-  const uploadResponse = await fetch(uploadUrl, {
-    method: 'POST',
-    credentials: 'include',
-    body: uploadForm,
-  });
-
-  if (!uploadResponse.ok) {
-    throw new Error('File upload failed');
-  }
-
-  const uploadResult = await uploadResponse.text();
-
-  let serializedId = '';
-  try {
-    serializedId = JSON.parse(uploadResult)?.serializedId || '';
-  } catch {
-    const idMatch = uploadResult.match(/serializedId['":\s]+['"]([^'"]+)['"]/);
-    serializedId = idMatch?.[1] || '';
-  }
-  if (!serializedId) throw new Error('Could not parse upload response');
+  const { serializedId } = await uploadDocumentToLectio(file, schoolId);
 
   // Step 2: Submit the form with the uploaded document
   const fields = { ...detail.formTokens.hiddenFields };

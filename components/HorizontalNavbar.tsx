@@ -527,16 +527,11 @@ export function HorizontalNavbar({ snapshot }: HorizontalNavbarProps) {
               </QuickActionButton>
             )}
             <DropdownMenu>
-              <Tooltip disableHoverableContent>
-                <TooltipTrigger asChild>
-                  <DropdownMenuTrigger asChild>
-                    <button type="button" className={cn(QUICK_ACTION_CLASS, 'min-[1180px]:hidden')} aria-label={t('horizontalNav.moreActions')}>
-                      <Ellipsis className="size-[1.1rem]" />
-                    </button>
-                  </DropdownMenuTrigger>
-                </TooltipTrigger>
-                <TooltipContent side="bottom" sideOffset={8}>{t('horizontalNav.moreActions')}</TooltipContent>
-              </Tooltip>
+              <DropdownMenuTrigger asChild>
+                <button type="button" className={cn(QUICK_ACTION_CLASS, 'min-[1180px]:hidden')} aria-label={t('horizontalNav.moreActions')} title={t('horizontalNav.moreActions')}>
+                  <Ellipsis className="size-[1.1rem]" />
+                </button>
+              </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-56 p-1.5">
                 <DropdownMenuLabel>{t('horizontalNav.quickActions')}</DropdownMenuLabel>
                 <DropdownMenuItem onSelect={openSettings}><Settings />{t('sidebar.menu.settings')}</DropdownMenuItem>

@@ -1,8 +1,11 @@
 import { defineConfig } from 'wxt';
 import tailwindcss from '@tailwindcss/vite';
 import path from 'path';
+import { readdir, readFile } from 'node:fs/promises';
+import { spawn } from 'node:child_process';
 
 const isAdminBuild = process.env.BETTERLECTIO_ADMIN_BUILD === 'true';
+const uploadPostHogSourceMaps = process.env.POSTHOG_UPLOAD_SOURCEMAPS === 'true';
 const adminApiOrigin = process.env.VITE_ADMIN_API_ORIGIN?.replace(/\/$/, '') || 'http://localhost:3000';
 const adminChromePublicKey = 'MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA1jb6R9h8tEiyHAsEzouUaoY8BGMJrqDc7g4jbMKvZzxABDMkx43V46Q7aD6mIO1sBClitguOEgQoLPj9iKMNJJIk+ZUHUQTifCfQH7tOEYHKzono//E2FhlQfLgOY+mQ+T9hF32CQo93ha/w4xenFqQNdnOB4nLDUxmvaYQ+/Iwi/ok6B36/0mqJiUp42+OC6YD+ISiAWao/6PE0FMCywwAOA6ozSuutaG3RkhehhL5rCZey6wcvv03dcjvVdt0rJbClWjN/4YsFoj77fYMVP2zYi37L+iE3FrMgrM/UvdlKj/vYXdCB8HFlEc8bsH37UzE5iOJJ+49IhnTZ4PUf4QIDAQAB';
 
@@ -15,6 +18,51 @@ function adminHostPermission(): string {
     throw new Error('VITE_ADMIN_API_ORIGIN must be an origin without a path');
   }
   return `${url.origin}/*`;
+}
+
+async function runCommand(command: string, args: string[]): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn(command, args, { stdio: 'inherit', env: process.env });
+    child.once('error', reject);
+    child.once('exit', (code) => {
+      if (code === 0) resolve();
+      else reject(new Error(`${command} exited with status ${code ?? 'unknown'}`));
+    });
+  });
+}
+
+async function injectAndUploadPostHogSourceMaps(outDir: string, browser: string): Promise<void> {
+  if (!process.env.POSTHOG_CLI_API_KEY) {
+    throw new Error('POSTHOG_CLI_API_KEY is required for release source-map upload');
+  }
+  const files = await readdir(outDir, { recursive: true });
+  const mapCount = files.filter((file) => file.endsWith('.map')).length;
+  if (mapCount === 0) throw new Error(`No source maps were generated in ${outDir}`);
+
+  const packageJson = JSON.parse(await readFile(path.resolve(__dirname, 'package.json'), 'utf8')) as { version: string };
+  const releaseArgs = [
+    '--directory', outDir,
+    '--release-name', `betterlectio-extension-${browser}`,
+    '--release-version', packageJson.version,
+  ];
+  const executable = path.resolve(
+    __dirname,
+    'node_modules',
+    '.bin',
+    process.platform === 'win32' ? 'posthog-cli.cmd' : 'posthog-cli',
+  );
+  await runCommand(executable, ['sourcemap', 'inject', ...releaseArgs]);
+
+  const javascriptFiles = files.filter((file) => file.endsWith('.js'));
+  const injected = await Promise.all(javascriptFiles.map(async (file) => {
+    const source = await readFile(path.join(outDir, file), 'utf8');
+    return source.includes('chunkId=') || source.includes('_posthogReleaseId');
+  }));
+  if (!injected.some(Boolean)) throw new Error('PostHog did not inject metadata into any extension chunk');
+
+  await runCommand(executable, ['sourcemap', 'upload', ...releaseArgs, '--delete-after']);
+  const remainingMaps = (await readdir(outDir, { recursive: true })).filter((file) => file.endsWith('.map'));
+  if (remainingMaps.length > 0) throw new Error('Uploaded source maps were not removed before packaging');
 }
 
 // See https://wxt.dev/api/config.html
@@ -65,6 +113,11 @@ export default defineConfig({
     },
   },
   hooks: {
+    'zip:start': async (wxt) => {
+      if (uploadPostHogSourceMaps) {
+        await injectAndUploadPostHogSourceMaps(wxt.config.outDir, wxt.config.browser);
+      }
+    },
     'entrypoints:found': (_wxt, entrypoints) => {
       // The dashboard handoff bridge is privileged. Remove it before WXT
       // imports or bundles entrypoints for every ordinary/store build.
@@ -144,6 +197,9 @@ export default defineConfig({
     startUrls: ['https://www.lectio.dk/'],
   },
   zip: {
+    // Maps are uploaded from the exact built directory before this archive is
+    // created and must never ship inside a browser-store artifact.
+    exclude: ['**/*.map'],
     // WXT 0.21: includeSources - excludeSources. Default include is all
     // non-dot files, so an explicit allowlist keeps AMO sources to the
     // files needed to rebuild the extension.
@@ -173,6 +229,7 @@ export default defineConfig({
   },
   vite: () => ({
     plugins: [tailwindcss()],
+    build: uploadPostHogSourceMaps ? { sourcemap: 'hidden' } : undefined,
     resolve: {
       // Use posthog-node's edge build (no Node.js-specific APIs like async_hooks)
       // so it works in browser extension content scripts and service workers.
