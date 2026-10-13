@@ -230,9 +230,22 @@ where kind <> 'cancelled' and sent_at is null and failed_at is null;
 -- accurate, but only explicit Lectio cancellations may leave the outbox until
 -- moved/room/teacher changes have soaked in production.
 create or replace function public.notification_cancellations_only_gate()
-returns trigger language plpgsql set search_path = '' as $$
+returns trigger language plpgsql security definer set search_path = '' as $$
 begin
   if new.kind <> 'cancelled' then return null; end if;
+  if not exists (
+    select 1
+    from public.notification_prefs p
+    where p.student_id = new.student_id
+      and p.enabled
+      and p.cancellations
+      and exists (
+        select 1 from public.device_tokens d
+        where d.student_id = new.student_id
+      )
+  ) then
+    return null;
+  end if;
   return new;
 end;
 $$;

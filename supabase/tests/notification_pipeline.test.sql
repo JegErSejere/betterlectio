@@ -3,7 +3,7 @@
 -- Run: supabase test db
 
 begin;
-select plan(9);
+select plan(10);
 
 insert into public.schools (id, name)
 values (9913, 'Notification pipeline test')
@@ -137,6 +137,26 @@ select is(
   1::bigint,
   'the MVP gate accepts explicit cancellations'
 );
+
+update public.notification_prefs
+set enabled = false
+where student_id = 'notification-test-student';
+
+insert into public.notification_outbox (
+  student_id, lesson_key, kind, payload, idempotency_key
+) values (
+  'notification-test-student', 'no-consent-test', 'cancelled', '{}'::jsonb, 'no-consent-test'
+);
+
+select is(
+  (select count(*) from public.notification_outbox where lesson_key = 'no-consent-test'),
+  0::bigint,
+  'the gate rejects cancellations without active notification consent'
+);
+
+update public.notification_prefs
+set enabled = true
+where student_id = 'notification-test-student';
 
 insert into public.notification_outbox (
   student_id, lesson_key, kind, payload, idempotency_key
