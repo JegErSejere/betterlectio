@@ -24,3 +24,12 @@ verify_jwt = false
 
 [functions.feedback-ai-triage]
 verify_jwt = false
+
+[functions.notification-register]
+verify_jwt = true
+
+[functions.notification-poller]
+verify_jwt = false
+
+[functions.notification-sender]
+verify_jwt = false
