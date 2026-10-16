@@ -1,6 +1,7 @@
 import { postFormViaHiddenIframe } from './iframe-post';
 import { captureException } from './posthog';
 import { uploadDocumentToLectio } from './lectio-file-upload';
+import { extractLectioError } from './lectio-error-popup';
 
 // ── Types ──────────────────────────────────────────────────────────────
 
@@ -62,6 +63,23 @@ export interface OpgaveDetail {
 }
 
 export type SubmissionStatus = 'uploading' | 'sending' | 'verifying';
+
+/** A validation error Lectio intentionally returned for the student's action. */
+export class LectioSubmissionError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'LectioSubmissionError';
+  }
+}
+
+function throwLectioSubmissionError(doc: Document): void {
+  const error = extractLectioError(doc);
+  if (!error) return;
+
+  const titleWithoutPrefix = error.title.replace(/^Fejl\s*:?\s*/i, '').trim();
+  const message = error.body || titleWithoutPrefix;
+  if (message) throw new LectioSubmissionError(message);
+}
 
 /** Lectio renders empty grade cells as one or two dash glyphs. */
 export function isMeaningfulAssignmentGrade(value: string | null | undefined): boolean {
@@ -460,6 +478,8 @@ export async function submitComment(
   onStatus?.('sending');
   const doc = await postFormViaHiddenIframe(detail.formTokens.action, fields);
 
+  throwLectioSubmissionError(doc);
+
   // Login page or invalid response means the submission did not complete.
   if (!doc.querySelector('#m_Content_NameLbl')) return false;
 
@@ -551,6 +571,7 @@ export async function uploadFileAndSubmit(
 
   onStatus?.('sending');
   const doc = await postFormViaHiddenIframe(detail.formTokens.action, fields);
+  throwLectioSubmissionError(doc);
   if (!doc.querySelector('#m_Content_NameLbl')) return false;
 
   onStatus?.('verifying');

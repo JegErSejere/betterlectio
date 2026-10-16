@@ -292,6 +292,8 @@ fetch(`${window.location.origin}/lectio/${schoolId}/path.aspx`);
 
 **Beskeder safety:** For non-idempotent iframe-post actions (send/reply/delete), don't auto-fallback to native postback on parse errors — can duplicate side effects. Show refresh/retry prompt instead.
 
+**Beskeder navigation:** Lectio thread responses canonicalize their URL to `beskeder2.aspx?type=visbesked&id=<threadId>`. The optional "Nyeste" redirect must apply only to the bare `beskeder2.aspx` landing URL; preserve every query-bearing message state (thread, compose, folder, search, and future Lectio states).
+
 **Beskeder recipient picker cache:** Compose recipient autocomplete uses Lectio's `bcteacher/bcstudent/bchold/bcgroup` caches, NOT `AvanceretSkema`. AvanceretSkema's `HE*/GE*` IDs silently fail validation server-side. Use `fetchBeskederRecipientItems` from `lib/beskeder-recipients-cache.ts`.
 
 **Standalone compose:** Global surfaces such as `ReferralInviteDialog` must call `beginStandaloneComposeViaIframe(schoolId)` instead of relying on compose controls in the current page DOM. It credential-fetches the inbox, enters new-message state through the serialized iframe mutex, and returns detached compose controls/form state plus the document that registered the recipient cache URLs. A successful send consumes that state; bootstrap a fresh compose session before sending another message.

@@ -33,6 +33,7 @@ import {
   removeGroupMember,
   type SubmissionStatus,
   uploadFileAndSubmit,
+  LectioSubmissionError,
 } from '@/lib/opgave-detail';
 import type { OpgaveDetail, AvailableGroupStudent } from '@/lib/opgave-detail';
 import { fetchPictureUrl, getCachedPictureUrl, isPictureCacheStale } from '@/lib/findskema-storage';
@@ -266,8 +267,14 @@ export function OpgaveDetailSheet({ open, onOpenChange, entry, schoolId, viewMod
         toast.error(t('opgaveDetail.errors.sendFailed'));
       }
     } catch (err) {
-      captureException(err, undefined, { source: 'opgave-submit' });
-      toast.error(t('opgaveDetail.errors.sendError'));
+      if (err instanceof LectioSubmissionError) {
+        toast.error(t('opgaveDetail.errors.sendFailed'), {
+          description: err.message,
+        });
+      } else {
+        captureException(err, undefined, { source: 'opgave-submit' });
+        toast.error(t('opgaveDetail.errors.sendError'));
+      }
     } finally {
       setSubmitting(false);
       setSubmitStatus(null);

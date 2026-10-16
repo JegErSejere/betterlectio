@@ -174,9 +174,15 @@ export function parseCurrentFolder(
   );
   const comment = infoDiv?.textContent?.trim() ?? '';
 
-  // Extract folderid from URL
-  const url = new URL(doc.location?.href ?? window.location.href);
-  const folderId = url.searchParams.get('folderid') ?? '';
+  // Lectio keeps the current folder in WebForms/tree-view state. Folder
+  // selections now post back to DokumentOversigt.aspx without adding a
+  // folderid query parameter, so the selected node is the source of truth.
+  // Keep the query parameter as a fallback for older/direct page variants.
+  const selectedFolderId = getSelectedFolderId(doc);
+  const documentHref = doc.location?.href
+    ?? (typeof window !== 'undefined' ? window.location.href : 'https://www.lectio.dk/');
+  const urlFolderId = new URL(documentHref).searchParams.get('folderid');
+  const folderId = selectedFolderId ?? urlFolderId ?? '';
 
   return { label, iconSrc, comment, folderId };
 }

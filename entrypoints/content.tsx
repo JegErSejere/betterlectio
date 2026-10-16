@@ -13,6 +13,7 @@ import { OpgaverPage, parseOpgaverFromDOM, fetchAllOpgaver, type OpgaveEntry } f
 import { getCachedOpgaver, fetchAndCacheOpgaver } from "@/lib/opgaver-deadlines-cache";
 import { BeskederPage, parseBeskederFromDOM } from "@/components/BeskederPage";
 import { newMessage } from "@/lib/beskeder-parser";
+import { shouldRedirectMessagesToNewest } from "@/lib/beskeder-navigation";
 import { BeskederThreadView } from "@/components/BeskederThreadView";
 import { BeskederComposePage, enhanceComposeForm } from "@/components/BeskederCompose";
 import {
@@ -626,11 +627,11 @@ function initLayout() {
   installActivityModalClickInterceptor();
 
   // Redirect messages page to "Nyeste" folder by default
-  if (
-    (settings.behavior.messagesAutoRedirect ?? true) &&
-    window.location.pathname.includes("beskeder2.aspx") &&
-    !window.location.search.includes("mappeid")
-  ) {
+  if (shouldRedirectMessagesToNewest(
+    window.location.pathname,
+    window.location.search,
+    settings.behavior.messagesAutoRedirect ?? true,
+  )) {
     window.location.href = window.location.pathname + "?mappeid=-70";
     return;
   }
