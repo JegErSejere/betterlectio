@@ -30,7 +30,7 @@ function toBase64(bytes: Uint8Array): string {
   return btoa(binary)
 }
 
-function fromBase64(value: string): Uint8Array {
+function fromBase64(value: string): Uint8Array<ArrayBuffer> {
   const binary = atob(value)
   return Uint8Array.from(binary, (character) => character.charCodeAt(0))
 }
@@ -53,7 +53,11 @@ export function masterKeyFromBase64(value: string): Uint8Array {
 }
 
 async function importAesKey(bytes: Uint8Array): Promise<CryptoKey> {
-  return await crypto.subtle.importKey("raw", bytes, { name: "AES-GCM" }, false, ["encrypt", "decrypt"])
+  return await crypto.subtle.importKey("raw", Uint8Array.from(bytes).buffer, { name: "AES-GCM" }, false, ["encrypt", "decrypt"])
+}
+
+function cryptoBytes(bytes: Uint8Array): Uint8Array<ArrayBuffer> {
+  return Uint8Array.from(bytes)
 }
 
 export function cookieJarPayload(
@@ -88,12 +92,12 @@ export async function encryptLectioSession(
   const plaintext = encoder.encode(JSON.stringify(payload))
 
   const ciphertext = await crypto.subtle.encrypt(
-    { name: "AES-GCM", iv, additionalData: aad(payload.studentId, payload.schoolId, "jar") },
+    { name: "AES-GCM", iv: cryptoBytes(iv), additionalData: cryptoBytes(aad(payload.studentId, payload.schoolId, "jar")) },
     dek,
     plaintext,
   )
   const wrappedDek = await crypto.subtle.encrypt(
-    { name: "AES-GCM", iv: wrapIv, additionalData: aad(payload.studentId, payload.schoolId, "dek") },
+    { name: "AES-GCM", iv: cryptoBytes(wrapIv), additionalData: cryptoBytes(aad(payload.studentId, payload.schoolId, "dek")) },
     masterKey,
     dekBytes,
   )
@@ -117,21 +121,21 @@ export async function decryptLectioSession(
   const dekBytes = await crypto.subtle.decrypt(
     {
       name: "AES-GCM",
-      iv: fromBase64(encrypted.wrapIv),
-      additionalData: aad(studentId, schoolId, "dek"),
+      iv: cryptoBytes(fromBase64(encrypted.wrapIv)),
+      additionalData: cryptoBytes(aad(studentId, schoolId, "dek")),
     },
     masterKey,
-    fromBase64(encrypted.wrappedDek),
+    cryptoBytes(fromBase64(encrypted.wrappedDek)),
   )
   const dek = await importAesKey(new Uint8Array(dekBytes))
   const plaintext = await crypto.subtle.decrypt(
     {
       name: "AES-GCM",
-      iv: fromBase64(encrypted.iv),
-      additionalData: aad(studentId, schoolId, "jar"),
+      iv: cryptoBytes(fromBase64(encrypted.iv)),
+      additionalData: cryptoBytes(aad(studentId, schoolId, "jar")),
     },
     dek,
-    fromBase64(encrypted.ciphertext),
+    cryptoBytes(fromBase64(encrypted.ciphertext)),
   )
   const payload = JSON.parse(decoder.decode(plaintext)) as LectioCookieJarPayload
   if (payload.studentId !== studentId || payload.schoolId !== schoolId) {
@@ -139,4 +143,3 @@ export async function decryptLectioSession(
   }
   return payload
 }
-

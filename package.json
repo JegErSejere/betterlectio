@@ -2,7 +2,7 @@
   "name": "betterlectio",
   "description": "Better styling and improved functionality for Lectio",
   "private": true,
-  "version": "0.0.41",
+  "version": "0.0.43",
   "author": "Jonathan Bangert",
   "homepage": "https://github.com/jonbng/betterlectio",
   "repository": {
@@ -43,6 +43,7 @@
     "lectio": "bun run ./tools/lectio-cli/src/index.ts"
   },
   "devDependencies": {
+    "@posthog/cli": "0.18.10",
     "@resvg/resvg-js": "^2.6.2",
     "@tailwindcss/vite": "^4.3.3",
     "@types/node": "^25.9.5",

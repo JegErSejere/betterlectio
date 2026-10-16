@@ -563,6 +563,53 @@ const AMBIENT_ERROR_SOURCES = new Set([
 let _errorCount = 0;
 const _seenErrorSignatures = new Set<string>();
 
+function isAbortOrCancellation(error: unknown): boolean {
+  const name = error instanceof Error
+    ? error.name
+    : typeof error === 'object' && error !== null && 'name' in error
+      ? String((error as { name?: unknown }).name ?? '')
+      : '';
+  const message = error instanceof Error ? error.message : String(error);
+  return name === 'AbortError' || /\b(?:abort(?:ed)?|cancel(?:led|ed)?)\b/i.test(message);
+}
+
+function stableFingerprintHash(value: string): string {
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(36);
+}
+
+function semanticExceptionFingerprint(
+  error: unknown,
+  properties?: Record<string, unknown>,
+): string {
+  const source = String(properties?.source ?? 'unknown')
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, '-')
+    .slice(0, 60);
+  const type = (error instanceof Error ? error.name : typeof error)
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, '-')
+    .slice(0, 40);
+  const code = properties?.failure_code ?? properties?.error_code ?? properties?.operation ?? properties?.action;
+  const message = error instanceof Error ? error.message : String(error);
+  const normalizedMessage = message
+    .toLowerCase()
+    .replace(/https?:\/\/\S+/g, '<url>')
+    .replace(/\b[0-9a-f]{8}-[0-9a-f-]{27,}\b/gi, '<uuid>')
+    .replace(/\b\d{4,}\b/g, '<id>')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 300);
+  const failureClass = code == null
+    ? stableFingerprintHash(normalizedMessage || type)
+    : String(code).toLowerCase().replace(/[^a-z0-9._-]+/g, '-').slice(0, 80);
+  return `betterlectio:${source || 'unknown'}:${type || 'error'}:${failureClass}`;
+}
+
 function shouldCaptureException(
   error: unknown,
   distinctId: string,
@@ -571,6 +618,7 @@ function shouldCaptureException(
   if (
     isTransientNetworkError(error)
     || isExtensionContextInvalidatedError(error)
+    || isAbortOrCancellation(error)
   ) return false;
 
   const message = error instanceof Error ? error.message : String(error);
@@ -635,10 +683,16 @@ export function captureException(
     if (_errorCount >= MAX_ERRORS_PER_CONTEXT) return;
     if (!shouldCaptureException(error, resolvedId, additionalProperties)) return;
     _errorCount += 1;
+    const exceptionProperties: Record<string, unknown> = {
+      ...additionalProperties,
+      $exception_fingerprint:
+        additionalProperties?.$exception_fingerprint
+        ?? semanticExceptionFingerprint(error, additionalProperties),
+    };
     getClient().captureException(error, resolvedId, {
       ...getExceptionAutoProperties(),
-      ...(additionalProperties?.current_page ? {} : getErrorContext()),
-      ...additionalProperties,
+      ...(exceptionProperties.current_page ? {} : getErrorContext()),
+      ...exceptionProperties,
       error_count: _errorCount,
     });
   } catch {

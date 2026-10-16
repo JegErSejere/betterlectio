@@ -2,6 +2,27 @@ import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 import { DOMParser } from 'linkedom';
 import { isMeaningfulAssignmentGrade, parseOpgaveDetail } from './opgave-detail';
+import { extractLectioError } from './lectio-error-popup';
+
+describe('extractLectioError', () => {
+  test('reads the detailed validation text from a hidden postback response', () => {
+    const doc = new DOMParser().parseFromString(`
+      <html><body>
+        <div id="lectioalerts" style="display:none">
+          <div data-title="Fejl: Aflevering kunne ikke gemmes">
+            <h1>Aflevering kunne ikke gemmes</h1>
+            Filnavnet er for langt. Omdøb filen, og prøv igen.
+          </div>
+        </div>
+      </body></html>
+    `, 'text/html') as unknown as Document;
+
+    assert.deepEqual(extractLectioError(doc), {
+      title: 'Fejl: Aflevering kunne ikke gemmes',
+      body: 'Filnavnet er for langt. Omdøb filen, og prøv igen.',
+    });
+  });
+});
 
 describe('isMeaningfulAssignmentGrade', () => {
   test('rejects Lectio placeholders without hiding the -3 grade', () => {

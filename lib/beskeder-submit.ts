@@ -6,6 +6,7 @@
 
 import { postFormViaHiddenIframe, parseFormTokensFromDoc, isSessionExpired } from './iframe-post';
 import { captureException } from './posthog';
+import { uploadDocumentToLectio } from './lectio-file-upload';
 import {
   parseFoldersFromDOM,
   parseThreadsFromDOM,
@@ -988,32 +989,7 @@ export async function uploadFileToLectio(
   file: File,
   schoolId: string,
 ): Promise<string> {
-  const uploadUrl = new URL(
-    `/lectio/${schoolId}/dokumentupload.aspx`,
-    window.location.origin,
-  ).href;
-  const formData = new FormData();
-  formData.append('file', file);
-
-  const resp = await fetch(uploadUrl, {
-    method: 'POST',
-    credentials: 'include',
-    body: formData,
-  });
-
-  if (!resp.ok) throw new Error('File upload failed');
-
-  const result = await resp.text();
-  let serializedId = '';
-  try {
-    serializedId = JSON.parse(result)?.serializedId || '';
-  } catch {
-    const m = result.match(/serializedId['":\s]+['"]([^'"]+)['"]/);
-    serializedId = m?.[1] || '';
-  }
-  if (!serializedId) throw new Error('Could not parse upload response');
-
-  return serializedId;
+  return (await uploadDocumentToLectio(file, schoolId)).serializedId;
 }
 
 /**

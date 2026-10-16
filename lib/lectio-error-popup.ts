@@ -21,7 +21,6 @@ const MARK_ATTR = 'data-bl-error-reported';
 export interface LectioErrorPayload {
   title: string;
   body: string;
-  dialogHtml: string;
 }
 
 type ErrorHandler = (payload: LectioErrorPayload) => void;
@@ -36,14 +35,37 @@ function extractError(contentEl: Element): LectioErrorPayload | null {
 
   // Ignore session dialogs (handled by session-renew content script). They
   // shouldn't start with "Fejl" but guard anyway.
-  const bodyText = normalizeText(contentEl);
+  // Lectio often repeats the dialog heading in an inner <h1>. Keep the
+  // actionable explanation clean when the payload is shown to the user.
+  const bodyClone = contentEl.cloneNode(true) as Element;
+  bodyClone.querySelectorAll('h1').forEach((heading) => heading.remove());
+  const bodyText = normalizeText(bodyClone) || normalizeText(contentEl);
   if (/Din session/i.test(bodyText)) return null;
 
   return {
     title: title.slice(0, 300),
     body: bodyText.slice(0, 2000),
-    dialogHtml: (contentEl as HTMLElement).innerHTML.slice(0, 4000),
   };
+}
+
+/**
+ * Read the first server-rendered Lectio error from a live or parsed document.
+ * Hidden iframe postbacks are removed before Lectio's dialog JavaScript runs,
+ * but the original `data-title="Fejl…"` element is still present in the HTML.
+ */
+export function extractLectioError(root: ParentNode): LectioErrorPayload | null {
+  const rootElement = root.nodeType === 1 ? root as Element : null;
+  if (rootElement?.hasAttribute('data-title')) {
+    const direct = extractError(rootElement);
+    if (direct) return direct;
+  }
+
+  for (const element of root.querySelectorAll?.('[data-title]') ?? []) {
+    const payload = extractError(element);
+    if (payload) return payload;
+  }
+
+  return null;
 }
 
 function maybeReport(node: Element, onError: ErrorHandler): void {

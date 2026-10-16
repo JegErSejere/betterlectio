@@ -13,6 +13,7 @@ import { OpgaverPage, parseOpgaverFromDOM, fetchAllOpgaver, type OpgaveEntry } f
 import { getCachedOpgaver, fetchAndCacheOpgaver } from "@/lib/opgaver-deadlines-cache";
 import { BeskederPage, parseBeskederFromDOM } from "@/components/BeskederPage";
 import { newMessage } from "@/lib/beskeder-parser";
+import { shouldRedirectMessagesToNewest } from "@/lib/beskeder-navigation";
 import { BeskederThreadView } from "@/components/BeskederThreadView";
 import { BeskederComposePage, enhanceComposeForm } from "@/components/BeskederCompose";
 import {
@@ -191,7 +192,7 @@ const LECTIO_SESSION_LOST_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 const LOGOUT_INTENT_GRACE_MS = 10 * 60 * 1000;
 
 function trackPotentialLectioSessionLoss(
-  detectionSource: 'login_aspx' | 'school_page_without_header',
+  detectionSource: 'login_aspx',
 ): void {
   const lastActivity = getLastAuthenticatedActivity();
   if (!lastActivity?.studentId) return;
@@ -604,14 +605,6 @@ function initLayout() {
   const hasMainHeader = !!document.querySelector(".ls-master-header");
 
   if (!hasMainHeader || isPrintPage) {
-    // If we're on a school page (has /lectio/XX/) but no main header,
-    // user is likely logged out - update the state
-    const isSchoolPage = /\/lectio\/\d+\//.test(window.location.pathname);
-    if (isSchoolPage && !hasMainHeader && !isPrintPage) {
-      trackPotentialLectioSessionLoss('school_page_without_header');
-      updateLoginState(); // This will detect not logged in and clear the cache
-    }
-
     // Homepage / login_list have no master header — still run the website-login
     // broker so a pending ?bl_login= can toast / complete after Lectio sign-in.
     if (!isPrintPage) {
@@ -634,11 +627,11 @@ function initLayout() {
   installActivityModalClickInterceptor();
 
   // Redirect messages page to "Nyeste" folder by default
-  if (
-    (settings.behavior.messagesAutoRedirect ?? true) &&
-    window.location.pathname.includes("beskeder2.aspx") &&
-    !window.location.search.includes("mappeid")
-  ) {
+  if (shouldRedirectMessagesToNewest(
+    window.location.pathname,
+    window.location.search,
+    settings.behavior.messagesAutoRedirect ?? true,
+  )) {
     window.location.href = window.location.pathname + "?mappeid=-70";
     return;
   }
@@ -815,29 +808,29 @@ function initLayout() {
       _origConsoleError.apply(console, args);
     };
 
-    // Detect Lectio's native error popup. These usually mean something in our
-    // extension broke a postback or ASP.NET form — critical signal, report it
-    // with as much context as possible and let the user know we saw it.
+    // Native popups often describe transient Lectio incidents. Keep them as a
+    // sanitized operational event; a generic popup is not a BetterLectio
+    // exception and its free-form HTML/body may contain student data.
     installLectioErrorDetector((payload) => {
       const recentUrls = getRecentUrls(3);
+      const normalizedText = `${payload.title} ${payload.body}`.toLowerCase();
       const errorProps = {
         source: 'lectio-native-error-popup',
-        error_title: payload.title,
-        error_body: payload.body,
-        dialog_html: payload.dialogHtml,
-        recent_urls: recentUrls,
-        previous_url: recentUrls[1],
+        error_class: normalizedText.includes('vedligehold')
+          ? 'maintenance'
+          : normalizedText.includes('log ind') || normalizedText.includes('session')
+            ? 'session'
+            : normalizedText.includes('adgang')
+              ? 'permission'
+              : 'generic',
+        recent_pathnames: recentUrls.map((url) => {
+          try { return new URL(url, window.location.origin).pathname; } catch { return undefined; }
+        }).filter(Boolean),
         school_id: cachedProfile.schoolId,
         page: pageProps.page,
         trigger_path: window.location.pathname,
-        referrer: document.referrer || undefined,
       };
       capture('lectio_native_error', phDistinctId, errorProps);
-      captureException(
-        new Error(`Lectio native error: ${payload.title}`),
-        phDistinctId,
-        errorProps,
-      );
       try {
         toast.info("Fejlen er rapporteret", {
           description: "Tak for hjælpen. Vi kigger på det.",
@@ -848,16 +841,34 @@ function initLayout() {
     // Capture failed HTTP requests to Lectio URLs
     const isLectioUrl = (url: string) => url.includes('lectio.dk');
 
-    const serializeBody = (body: unknown): string | undefined => {
-      if (!body) return undefined;
-      if (typeof body === 'string') return body.slice(0, 2000);
-      if (body instanceof URLSearchParams) return body.toString().slice(0, 2000);
-      if (body instanceof FormData) {
-        const entries: string[] = [];
-        body.forEach((v, k) => entries.push(`${k}=${v instanceof File ? `[File: ${v.name}]` : v}`));
-        return entries.join('&').slice(0, 2000);
+    const describeBody = (body: unknown): Record<string, unknown> => {
+      if (!body) return { request_body_kind: 'empty' };
+      if (typeof body === 'string') return { request_body_kind: 'string', request_body_bytes: body.length };
+      if (body instanceof URLSearchParams) {
+        return { request_body_kind: 'url_search_params', request_field_count: Array.from(body.keys()).length };
       }
-      try { return JSON.stringify(body).slice(0, 2000); } catch { return '[unserializable]'; }
+      if (body instanceof FormData) {
+        let fieldCount = 0;
+        let fileCount = 0;
+        let fileBytes = 0;
+        const fileTypes = new Set<string>();
+        body.forEach((value) => {
+          fieldCount += 1;
+          if (value instanceof File) {
+            fileCount += 1;
+            fileBytes += value.size;
+            if (value.type) fileTypes.add(value.type.slice(0, 80));
+          }
+        });
+        return {
+          request_body_kind: 'form_data',
+          request_field_count: fieldCount,
+          request_file_count: fileCount,
+          request_file_bytes: fileBytes,
+          request_file_types: [...fileTypes].slice(0, 5),
+        };
+      }
+      return { request_body_kind: 'other' };
     };
 
     const _origFetch = window.fetch;
@@ -872,26 +883,14 @@ function initLayout() {
         if (isLectioUrl(url) && isReportableLectioHttpStatus(res.status)) {
           const opts = args[1];
           const method = opts?.method ?? req?.method ?? 'GET';
-          const body = serializeBody(opts?.body ?? req?.body);
-          const headers = opts?.headers ?? req?.headers;
-          const headerObj = headers instanceof Headers
-            ? Object.fromEntries(headers.entries())
-            : headers ?? undefined;
-          // Clone response to read body without consuming the original
-          let responseBody: string | undefined;
-          try {
-            const cloned = res.clone();
-            responseBody = (await cloned.text()).slice(0, 1000);
-          } catch { /* ignore */ }
+          const bodyMetadata = describeBody(opts?.body ?? req?.body);
           const { message, fingerprint } = describeLectioHttpError(res.status, url, window.location.origin);
           captureException(new Error(message), phDistinctId, {
-            url,
+            endpoint: new URL(url, window.location.origin).pathname.split('/').pop(),
             status: res.status,
             method,
-            request_body: body,
-            request_headers: headerObj,
-            response_body: responseBody,
-            query_params: new URL(url, window.location.origin).search || undefined,
+            ...bodyMetadata,
+            response_content_type: res.headers.get('content-type')?.split(';', 1)[0] ?? undefined,
             $exception_fingerprint: fingerprint,
           });
         }
@@ -925,18 +924,18 @@ function initLayout() {
     };
     const _origXhrSend = XMLHttpRequest.prototype.send;
     XMLHttpRequest.prototype.send = function (this: XMLHttpRequest & { __blMethod?: string; __blUrl?: string }, ...args: any[]) {
-      const body = serializeBody(args[0]);
+      const bodyMetadata = describeBody(args[0]);
       this.addEventListener('loadend', () => {
         // Drop transient Lectio gateway/availability failures (502–504), while
         // retaining statuses that may expose a bad extension request.
         if (isReportableLectioHttpStatus(this.status) && isLectioUrl(this.__blUrl ?? '')) {
           const { message, fingerprint } = describeLectioHttpError(this.status, this.__blUrl ?? '', window.location.origin);
           captureException(new Error(message), phDistinctId, {
-            url: this.__blUrl,
+            endpoint: (() => { try { return new URL(this.__blUrl!, window.location.origin).pathname.split('/').pop(); } catch { return 'unknown'; } })(),
             status: this.status,
             method: this.__blMethod ?? 'GET',
-            request_body: body,
-            query_params: (() => { try { return new URL(this.__blUrl!, window.location.origin).search || undefined; } catch { return undefined; } })(),
+            ...bodyMetadata,
+            response_content_type: this.getResponseHeader('content-type')?.split(';', 1)[0] ?? undefined,
             $exception_fingerprint: fingerprint,
           });
         }
